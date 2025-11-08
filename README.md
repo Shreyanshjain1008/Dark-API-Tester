@@ -9,10 +9,10 @@ This tool features a sleek **dark mode interface**, **icon-based buttons**, **re
 
 | Section                 | Screenshot |
 |------------------------ |-------------|
-| 🏠 **Main Interface**  | ![Main Window](assets/screenshots/main_window.png) |
-| ⚙️ **Send Request**    | ![Send Request_1](assets/screenshots/send_request_1.png) |
-| ⚙️ **Send Request**    | ![Send Request_2](assets/screenshots/send_request_2.png) |
-| 🕑 **History Panel**   | ![History](assets/screenshots/history_section.png) |
+| 🏠 **Main Interface**  | ![Main Window](asserts/screenshots/main_window.png) |
+| ⚙️ **Send Request**    | ![Send Request_1](asserts/screenshots/send_request_1.png) |
+| ⚙️ **Send Request**    | ![Send Request_2](asserts/screenshots/send_request_2.png) |
+| 🕑 **History Panel**   | ![History](asserts/screenshots/history_section.png) |
 
 ---
 
