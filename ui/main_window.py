@@ -9,29 +9,36 @@ import sqlite3
 from datetime import datetime
 from PIL import Image
 import re
+import sys
 
 APP_NAME = "Dark API Tester"
-DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
-SQLITE_PATH = os.path.join(DATA_DIR, "history.db")
-JSON_HISTORY_PATH = os.path.join(DATA_DIR, "history.json")
-ICON_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "asserts", "icons")
+
+# --- PyInstaller-safe path handling ---
+def resource_path(relative_path: str) -> str:
+    try:
+        base_path = sys._MEIPASS  # PyInstaller temp folder
+    except Exception:
+        base_path = os.path.abspath(".")
+    return os.path.join(base_path, relative_path)
+
+# --- Writable user directory for persistent history ---
+USER_DATA_DIR = os.path.join(os.path.expanduser("~"), "Documents", "DarkAPITesterData")
+os.makedirs(USER_DATA_DIR, exist_ok=True)
+
+SQLITE_PATH = os.path.join(USER_DATA_DIR, "history.db")
+JSON_HISTORY_PATH = os.path.join(USER_DATA_DIR, "history.json")
+
+# --- Folder with icons (asserts, not assets) ---
+ICON_DIR = resource_path(os.path.join("asserts", "icons"))
 
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
 
-
-def ensure_data_dir():
-    os.makedirs(DATA_DIR, exist_ok=True)
-
-
 def now_iso():
-    from datetime import datetime
     return datetime.utcnow().isoformat() + "Z"
-
 
 def is_valid_url(url: str) -> bool:
     return bool(re.match(r"^https?://", url.strip()))
-
 
 def parse_headers_text(text: str):
     raw = text.strip()
@@ -51,9 +58,9 @@ def parse_headers_text(text: str):
         return headers
 
 
+# ------------------ HISTORY STORE ------------------
 class HistoryStore:
     def __init__(self):
-        ensure_data_dir()
         self._ensure_sqlite()
 
     def _ensure_sqlite(self):
@@ -83,6 +90,17 @@ class HistoryStore:
         ))
         conn.commit()
         conn.close()
+        # also backup to JSON
+        history = []
+        if os.path.exists(JSON_HISTORY_PATH):
+            try:
+                with open(JSON_HISTORY_PATH, "r", encoding="utf-8") as f:
+                    history = json.load(f)
+            except Exception:
+                history = []
+        history.append(entry)
+        with open(JSON_HISTORY_PATH, "w", encoding="utf-8") as f:
+            json.dump(history, f, indent=2, ensure_ascii=False)
 
     def list_entries(self, limit=100):
         conn = sqlite3.connect(SQLITE_PATH)
@@ -113,11 +131,51 @@ class HistoryStore:
             "timestamp": row[9]
         }
 
+    def import_from_json(self, filepath):
+        try:
+            with open(filepath, "r", encoding="utf-8") as f:
+                items = json.load(f)
+            for entry in items:
+                self.add_entry(entry)
+            return len(items)
+        except Exception as e:
+            print(f"⚠️ Failed import: {e}")
+            return 0
 
+    def export_to_json(self, filepath):
+        try:
+            conn = sqlite3.connect(SQLITE_PATH)
+            c = conn.cursor()
+            c.execute("SELECT method,url,headers,body,response_status,response_headers,response_body,time_ms,timestamp FROM history")
+            rows = c.fetchall()
+            conn.close()
+            data = []
+            for r in rows:
+                data.append({
+                    "method": r[0],
+                    "url": r[1],
+                    "headers": json.loads(r[2]),
+                    "body": r[3],
+                    "response_status": r[4],
+                    "response_headers": json.loads(r[5]),
+                    "response_body": r[6],
+                    "time_ms": r[7],
+                    "timestamp": r[8]
+                })
+            with open(filepath, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+            return len(data)
+        except Exception as e:
+            print(f"⚠️ Failed export: {e}")
+            return 0
+
+
+# ------------------ MAIN APP ------------------
 class APITesterApp(ctk.CTk):
     def __init__(self):
         super().__init__()
         self.title(APP_NAME)
+        self.iconbitmap(resource_path(os.path.join("asserts", "icons", "app.ico")))
         self.geometry("1100x700")
         self.minsize(900, 600)
         self.store = HistoryStore()
@@ -125,24 +183,14 @@ class APITesterApp(ctk.CTk):
         self.reload_history()
 
     def _load_icon(self, name, size=(20, 20)):
-        # Build absolute icon path
-        icon_path = os.path.abspath(os.path.join(
-            os.path.dirname(__file__), "..", "asserts", "icons", name
-        ))
-        
-        if os.path.exists(icon_path):
-            return ctk.CTkImage(
-                light_image=Image.open(icon_path),
-                dark_image=Image.open(icon_path),
-                size=size
-            )
+        path = os.path.join(ICON_DIR, name)
+        if os.path.exists(path):
+            return ctk.CTkImage(light_image=Image.open(path), dark_image=Image.open(path), size=size)
         else:
-            print(f"⚠️ Icon missing: {icon_path}")
+            print(f"⚠️ Icon missing: {path}")
             return None
 
-
     def _build_ui(self):
-        # top frame
         top = ctk.CTkFrame(self, corner_radius=10)
         top.pack(fill="x", padx=10, pady=10)
 
@@ -158,10 +206,14 @@ class APITesterApp(ctk.CTk):
         self.send_btn.pack(side="left", padx=5)
 
         clear_icon = self._load_icon("clear.png")
-        self.clear_btn = ctk.CTkButton(top, text="Clear", image=clear_icon, compound="left", command=self.clear_fields)
-        self.clear_btn.pack(side="left", padx=5)
+        ctk.CTkButton(top, text="Clear", image=clear_icon, compound="left", command=self.clear_fields).pack(side="left", padx=5)
 
-        # headers & body
+        # Export/Import buttons
+        export_icon = self._load_icon("export.png")
+        import_icon = self._load_icon("import.png")
+        ctk.CTkButton(top, text="Export", image=export_icon, compound="left", command=self.export_history).pack(side="left", padx=5)
+        ctk.CTkButton(top, text="Import", image=import_icon, compound="left", command=self.import_history).pack(side="left", padx=5)
+
         body_frame = ctk.CTkFrame(self)
         body_frame.pack(fill="both", expand=True, padx=10, pady=10)
 
@@ -173,12 +225,10 @@ class APITesterApp(ctk.CTk):
         self.body_box.insert("1.0", '{\n  "example": "data"\n}')
         self.body_box.pack(fill="x", pady=5)
 
-        # response output
         self.response_box = ctk.CTkTextbox(body_frame, height=200)
         self.response_box.insert("1.0", "Response will appear here...")
         self.response_box.pack(fill="both", expand=True, pady=5)
 
-        # history
         hist_frame = ctk.CTkFrame(self)
         hist_frame.pack(fill="x", padx=10, pady=10)
         hist_icon = self._load_icon("history.png")
@@ -196,17 +246,14 @@ class APITesterApp(ctk.CTk):
         if not is_valid_url(url):
             messagebox.showwarning(APP_NAME, "URL must start with http:// or https://")
             return
-
         method = self.method_option.get()
         headers_text = self.headers_box.get("1.0", "end")
         body_text = self.body_box.get("1.0", "end")
-
         try:
             headers = parse_headers_text(headers_text)
         except ValueError as e:
             messagebox.showerror(APP_NAME, f"Header Error:\n{e}")
             return
-
         threading.Thread(target=self._send_thread, args=(method, url, headers, body_text), daemon=True).start()
 
     def _send_thread(self, method, url, headers, body):
@@ -225,18 +272,15 @@ class APITesterApp(ctk.CTk):
         except Exception as e:
             self.after(0, lambda err=e: self.response_box.insert("end", f"\nError: {err}\n"))
 
-
     def _display_response(self, entry):
         pretty_body = entry["response_body"]
         try:
             pretty_body = json.dumps(json.loads(pretty_body), indent=2)
         except Exception:
             pass
-
         text = f"Status: {entry['response_status']}   Time: {entry['time_ms']} ms\n\n"
         text += f"Headers:\n{json.dumps(entry['response_headers'], indent=2)}\n\n"
         text += f"Body:\n{pretty_body}\n"
-
         self.response_box.delete("1.0", "end")
         self.response_box.insert("1.0", text)
 
@@ -271,3 +315,26 @@ class APITesterApp(ctk.CTk):
         self.headers_box.delete("1.0", "end")
         self.body_box.delete("1.0", "end")
         self.response_box.delete("1.0", "end")
+
+    # --- EXPORT / IMPORT ---
+    def export_history(self):
+        filepath = filedialog.asksaveasfilename(
+            defaultextension=".json",
+            filetypes=[("JSON Files", "*.json")],
+            title="Export History"
+        )
+        if not filepath:
+            return
+        count = self.store.export_to_json(filepath)
+        messagebox.showinfo(APP_NAME, f"Exported {count} entries to:\n{filepath}")
+
+    def import_history(self):
+        filepath = filedialog.askopenfilename(
+            filetypes=[("JSON Files", "*.json")],
+            title="Import History"
+        )
+        if not filepath:
+            return
+        count = self.store.import_from_json(filepath)
+        messagebox.showinfo(APP_NAME, f"Imported {count} entries.")
+        self.reload_history()
