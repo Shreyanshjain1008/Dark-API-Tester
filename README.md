@@ -1,7 +1,7 @@
 🌌 Dark API Tester
 
 ⚙️ A modern, Postman-style desktop application built in Python with CustomTkinter and Requests.
-Beautifully designed with a sleek dark interface, intuitive icon buttons, JSON formatting, and a fully persistent history system — all packed into a standalone desktop app.
+Beautifully designed with a sleek dark interface, intuitive icon buttons, JSON formatting, import/export support, and a fully persistent history system — all packed into a standalone desktop app.
 
 ---
 
